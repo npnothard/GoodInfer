@@ -1,0 +1,35 @@
+cmake_minimum_required(VERSION 3.24)
+project(green_streams VERSION 0.1.0 LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(CUDAToolkit 12.6 REQUIRED)
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+execute_process(COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
+                OUTPUT_VARIABLE _pybind11_dir OUTPUT_STRIP_TRAILING_WHITESPACE
+                RESULT_VARIABLE _pybind11_result)
+if(NOT _pybind11_result EQUAL 0)
+  message(FATAL_ERROR "Install pybind11 into the selected Python environment")
+endif()
+list(PREPEND CMAKE_PREFIX_PATH "${_pybind11_dir}")
+find_package(pybind11 CONFIG REQUIRED)
+
+add_library(green_streams_core STATIC src/initializer.cpp)
+set_target_properties(green_streams_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(green_streams_core PUBLIC include)
+# Driver symbols (cuInit/cuGreenCtxCreate/...) require libcuda, not just cudart.
+target_link_libraries(green_streams_core PUBLIC CUDA::cuda_driver)
+target_compile_options(green_streams_core PRIVATE -Wall -Wextra -Wpedantic)
+pybind11_add_module(_native src/bindings.cpp)
+target_link_libraries(_native PRIVATE green_streams_core)
+
+option(GREEN_STREAMS_BUILD_PROBE "Build the SM-ID and overlap diagnostic kernel" ON)
+if(GREEN_STREAMS_BUILD_PROBE)
+  enable_language(CUDA)
+  target_sources(_native PRIVATE src/probe.cu)
+  target_compile_definitions(_native PRIVATE GREEN_STREAMS_WITH_PROBE=1)
+  target_link_libraries(_native PRIVATE CUDA::cudart)
+  set_target_properties(_native PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+endif()
+install(TARGETS _native LIBRARY DESTINATION green_streams)
+install(DIRECTORY python/green_streams/ DESTINATION green_streams
+        FILES_MATCHING PATTERN "*.py")
